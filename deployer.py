@@ -1,7 +1,8 @@
+import sys
+
 import boto3
 import kubernetes.client.exceptions
 import yaml
-from flask import Flask, request
 from kubernetes import client, config
 
 
@@ -148,13 +149,25 @@ def download_file_from_s3(bucket_name, file_key, destination_path):
         print(f"Cannot download file {destination_path + file_key} from S3: {str(e)}")
 
 
-@app.route('/deploy', methods=['POST'])
-def handle_post_request():
-    data: dict = request.get_json()
+def parse_args(args):
+    arg_map = {}
+    key = None
+    for arg in args:
+        if arg.startswith("--"):
+            key = arg[2:]
+            arg_map[key] = None
+        elif key:
+            arg_map[key] = arg
+            key = None
+    return arg_map
 
-    namespace = data['namespace']
-    config_path = data['config_path']
-    bucket_name = data['bucket_name']
+
+def apply_manifests():
+    args: dict = parse_args(sys.argv[1:])
+
+    namespace = args['namespace']
+    config_path = args['config_path']
+    bucket_name = args['bucket_name']
 
     download_file_from_s3(bucket_name, f'{config_path}/ingress.yaml', 'ingress.yaml')
     download_file_from_s3(bucket_name, f'{config_path}/service.yaml', 'service.yaml')
@@ -164,8 +177,12 @@ def handle_post_request():
     create_service(namespace, 'service.yaml')
     create_ingress(namespace, 'ingress.yaml')
 
-    return "Ok"
+    print("Finished")
 
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Arguments not provided")
+        exit(1)
+
+    apply_manifests()
