@@ -1,3 +1,4 @@
+import os
 import sys
 
 import boto3
@@ -79,12 +80,12 @@ def create_ingress(namespace: str, manifest_path: str):
             namespace=namespace,
             body=manifest_file
         )
-        print("Service has been created")
+        print("Ingress has been created")
     except kubernetes.client.exceptions.ApiException as e:
-        print(f"Replacing service error code: {e.status}")
+        print(f"Replacing ingress error code: {e.status}")
         if is_resource_missing(e):
             try:
-                print("Service not found, creating ...")
+                print("Ingress not found, creating ...")
                 api_instance.create_namespaced_ingress(
                     namespace=namespace,
                     body=manifest_file
@@ -116,7 +117,8 @@ def load_kubernetes_config():
 
 apis = {
     "Deployment": client.AppsV1Api,
-    "Service": client.CoreV1Api
+    "Service": client.CoreV1Api,
+    "Ingress": client.NetworkingV1Api
 }
 
 
@@ -134,9 +136,6 @@ def get_manifest_kind(manifest):
 
 def get_namespace(manifest):
     return manifest.get('metadata', {}).get('namespace', 'default')
-
-
-app = Flask(__name__)
 
 
 def download_file_from_s3(bucket_name, file_key, destination_path):
@@ -180,9 +179,20 @@ def apply_manifests():
     print("Finished")
 
 
+def rm_files(folder_path):
+    for filename in os.listdir(folder_path):
+        if filename != "deployer.yaml":
+            file_path = os.path.join(folder_path, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+
+
+# example of usage:
+# python3 deployer.py --namespace factory-apps --config_path applications/demo1 --bucket_name factory-ci-cd
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Arguments not provided")
         exit(1)
 
     apply_manifests()
+    rm_files("/")
