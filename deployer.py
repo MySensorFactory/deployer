@@ -1,10 +1,23 @@
 import os
 import sys
+from pathlib import Path
 
 import boto3
 import kubernetes.client.exceptions
 import yaml
 from kubernetes import client, config
+
+BUCKET_NAME = 'bucket_name'
+
+CONFIG_PATH = 'config_path'
+
+NAMESPACE = 'namespace'
+
+INGRESS_FILENAME = 'ingress.yaml'
+
+SERVICE_FILENAME = 'service.yaml'
+
+DEPLOYMENT_FILENAME = 'deployment.yaml'
 
 
 def create_deployment(namespace: str, manifest_path: str):
@@ -131,7 +144,7 @@ def get_manifest_kind(manifest):
         return manifest.get('kind', '')
     except KeyError as e:
         print(f"Unknown type of Kubernetes manifest, details:  {str(e)}")
-        raise Exception()
+        raise e
 
 
 def get_namespace(manifest):
@@ -161,27 +174,41 @@ def parse_args(args):
     return arg_map
 
 
+def is_file_exist(filename: str):
+    file_path = Path(filename)
+    if file_path.is_file():
+        return True
+
+    return False
+
+
 def apply_manifests():
     args: dict = parse_args(sys.argv[1:])
 
-    namespace = args['namespace']
-    config_path = args['config_path']
-    bucket_name = args['bucket_name']
+    namespace = args[NAMESPACE]
+    config_path = args[CONFIG_PATH]
+    bucket_name = args[BUCKET_NAME]
 
-    download_file_from_s3(bucket_name, f'{config_path}/ingress.yaml', 'ingress.yaml')
-    download_file_from_s3(bucket_name, f'{config_path}/service.yaml', 'service.yaml')
-    download_file_from_s3(bucket_name, f'{config_path}/deployment.yaml', 'deployment.yaml')
+    download_file_from_s3(bucket_name, f'{config_path}/{DEPLOYMENT_FILENAME}', DEPLOYMENT_FILENAME)
+    download_file_from_s3(bucket_name, f'{config_path}/{SERVICE_FILENAME}', SERVICE_FILENAME)
+    download_file_from_s3(bucket_name, f'{config_path}/{INGRESS_FILENAME}', INGRESS_FILENAME)
 
-    create_deployment(namespace, 'deployment.yaml')
-    create_service(namespace, 'service.yaml')
-    create_ingress(namespace, 'ingress.yaml')
+    if is_file_exist(DEPLOYMENT_FILENAME):
+        create_deployment(namespace, DEPLOYMENT_FILENAME)
+
+    if is_file_exist(SERVICE_FILENAME):
+        create_service(namespace, SERVICE_FILENAME)
+
+    if is_file_exist(INGRESS_FILENAME):
+        create_ingress(namespace, INGRESS_FILENAME)
 
     print("Finished")
 
 
 def rm_files(folder_path):
     for filename in os.listdir(folder_path):
-        if filename != "deployer.yaml":
+        this_script_name = os.path.basename(sys.argv[0])
+        if filename != this_script_name:
             file_path = os.path.join(folder_path, filename)
             if os.path.isfile(file_path):
                 os.remove(file_path)
