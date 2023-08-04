@@ -218,8 +218,7 @@ def rm_files(folder_path):
 # python3 deployer.py --namespace factory-apps --config_path applications/demo1 --bucket_name factory-ci-cd
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Arguments not provided")
-        exit(1)
+        raise Exception("Arguments not provided")
 
     apply_manifests()
     rm_files("/")
