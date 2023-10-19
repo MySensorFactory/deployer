@@ -1,225 +1,72 @@
 import os
-import sys
-from pathlib import Path
+from typing import Any
 
-import boto3
-import kubernetes.client.exceptions
-import yaml
-from kubernetes import client, config
-
-BUCKET_NAME = 'bucket_name'
-
-CONFIG_PATH = 'config_path'
-
-NAMESPACE = 'namespace'
-
-INGRESS_FILENAME = 'ingress.yaml'
-
-SERVICE_FILENAME = 'service.yaml'
-
-DEPLOYMENT_FILENAME = 'deployment.yaml'
+from cicd_tools import SqsClient, S3Client, ParameterStoreClient, DeployConfig, KubernetesManager, YamlLoader
 
 
-def create_deployment(namespace: str, manifest_path: str):
-    load_kubernetes_config()
-    manifest_file = load_manifest_file(manifest_path)
-    api_instance = get_api_instance(manifest_file)
+def rm_deploy_files(current_dir: str, config: DeployConfig):
+    for filename in config.order:
+        file_path = os.path.join(current_dir, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
 
-    try:
-        api_instance.replace_namespaced_deployment(
-            name=manifest_file['metadata']['name'],
-            namespace=namespace,
-            body=manifest_file
+
+def deploy(k8s_manager: KubernetesManager, deploy_config: DeployConfig):
+    is_rollback_performed = False
+    for manifest in deploy_config.order:
+        if not is_rollback_performed:
+            k8s_manager.perform_rollback_from_config_file('rollback.yml')
+            is_rollback_performed = True
+        k8s_manager.create_manifest(yaml_file=manifest)
+
+
+def deploy_loop(current_dir: str,
+                k8s_manager: KubernetesManager,
+                s3client: Any,
+                sqs_client: Any,
+                yaml_loader: YamlLoader) -> None:
+    while True:
+        event = sqs_client.wait_for_event('Deploy')
+        print('Got deploy event')
+
+        s3_dir = event.value.config_dir
+
+        print('Downloading ...')
+        s3client.download_files_from_dir(
+            s3_folder_path=s3_dir,
+            local_folder=current_dir
         )
-        print("Service has been created")
-    except kubernetes.client.exceptions.ApiException as e:
-        print(f"Replacing service error code: {e.status}")
-        if is_resource_missing(e):
-            try:
-                print("Service not found, creating ...")
-                api_instance.create_namespaced_deployment(
-                    namespace=namespace,
-                    body=manifest_file
-                )
-            except kubernetes.client.exceptions.ApiException as e:
-                print(f"Api exception: {e}")
-            except Exception as e:
-                print(f"Unexpected error: {e}")
 
-    except Exception as e:
-        print(f"Unexpected error: {e}")
+        print('Deploying ...')
+        deploy_config = yaml_loader.parse_yaml('config.yml', DeployConfig)
+        deploy(k8s_manager, deploy_config)
+        rm_deploy_files(current_dir, deploy_config)
 
 
-def create_service(namespace: str, manifest_path: str):
-    load_kubernetes_config()
-    manifest_file = load_manifest_file(manifest_path)
-    api_instance = get_api_instance(manifest_file)
+def main() -> None:
+    BUCKET_NAME = 'factory-ci-cd'
+    REGION = "eu-central-1"
+    CICD_PARAMETER_QUEUE_URL_PARAM = "/CICD/CICDQueueUrl"
 
-    try:
-        api_instance.replace_namespaced_service(
-            name=manifest_file['metadata']['name'],
-            namespace=namespace,
-            body=manifest_file
-        )
-        print("Service has been created")
-    except kubernetes.client.exceptions.ApiException as e:
-        print(f"Replacing service error code: {e.status}")
-        if is_resource_missing(e):
-            try:
-                print("Service not found, creating ...")
-                api_instance.create_namespaced_service(
-                    namespace=namespace,
-                    body=manifest_file
-                )
-            except kubernetes.client.exceptions.ApiException as e:
-                print(f"Api exception: {str(e)}")
-            except Exception as e:
-                print(f"Unexpected error: {str(e)}")
-        else:
-            print(f"Unexpected error: {str(e)}")
+    k8s_manager = KubernetesManager()
+    yaml_loader = YamlLoader()
+    current_dir = os.getcwd()
 
-    except Exception as e:
-        print(f"Unexpected error: {e}")
+    parameter_store_client = ParameterStoreClient(REGION)
+    sqs_queue_url = parameter_store_client.get_parameter(CICD_PARAMETER_QUEUE_URL_PARAM)
+
+    sqs_client = SqsClient(
+        region=REGION,
+        timeout=5,
+        queue_url=sqs_queue_url
+    )
+    s3client = S3Client(
+        region=REGION,
+        bucket_name=BUCKET_NAME
+    )
+
+    deploy_loop(current_dir, k8s_manager, s3client, sqs_client, yaml_loader)
 
 
-def create_ingress(namespace: str, manifest_path: str):
-    load_kubernetes_config()
-    manifest_file = load_manifest_file(manifest_path)
-    api_instance = get_api_instance(manifest_file)
-
-    try:
-        api_instance.replace_namespaced_ingress(
-            name=manifest_file['metadata']['name'],
-            namespace=namespace,
-            body=manifest_file
-        )
-        print("Ingress has been created")
-    except kubernetes.client.exceptions.ApiException as e:
-        print(f"Replacing ingress error code: {e.status}")
-        if is_resource_missing(e):
-            try:
-                print("Ingress not found, creating ...")
-                api_instance.create_namespaced_ingress(
-                    namespace=namespace,
-                    body=manifest_file
-                )
-            except kubernetes.client.exceptions.ApiException as e:
-                print(f"Api exception: {str(e)}")
-            except Exception as e:
-                print(f"Unexpected error: {str(e)}")
-        else:
-            print(f"Unexpected error: {str(e)}")
-
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-
-
-def is_resource_missing(e):
-    return e.status == 404
-
-
-def load_manifest_file(manifest_path):
-    with open(manifest_path) as file:
-        manifest_file = yaml.safe_load(file)
-    return manifest_file
-
-
-def load_kubernetes_config():
-    config.load_kube_config()
-
-
-apis = {
-    "Deployment": client.AppsV1Api,
-    "Service": client.CoreV1Api,
-    "Ingress": client.NetworkingV1Api
-}
-
-
-def get_api_instance(manifest_file):
-    return apis[get_manifest_kind(manifest_file)](client.ApiClient())
-
-
-def get_manifest_kind(manifest):
-    try:
-        return manifest.get('kind', '')
-    except KeyError as e:
-        print(f"Unknown type of Kubernetes manifest, details:  {str(e)}")
-        raise e
-
-
-def get_namespace(manifest):
-    return manifest.get('metadata', {}).get('namespace', 'default')
-
-
-def download_file_from_s3(bucket_name, file_key, destination_path):
-    s3_client = boto3.client('s3')
-
-    try:
-        s3_client.download_file(bucket_name, file_key, destination_path)
-        print(f"File {destination_path + file_key} has been downloaded.")
-    except Exception as e:
-        print(f"Cannot download file {destination_path + file_key} from S3: {str(e)}")
-
-
-def parse_args(args):
-    arg_map = {}
-    key = None
-    for arg in args:
-        if arg.startswith("--"):
-            key = arg[2:]
-            arg_map[key] = None
-        elif key:
-            arg_map[key] = arg
-            key = None
-    return arg_map
-
-
-def is_file_exist(filename: str):
-    file_path = Path(filename)
-    if file_path.is_file():
-        return True
-
-    return False
-
-
-def apply_manifests():
-    args: dict = parse_args(sys.argv[1:])
-
-    namespace = args[NAMESPACE]
-    config_path = args[CONFIG_PATH]
-    bucket_name = args[BUCKET_NAME]
-
-    download_file_from_s3(bucket_name, f'{config_path}/{DEPLOYMENT_FILENAME}', DEPLOYMENT_FILENAME)
-    download_file_from_s3(bucket_name, f'{config_path}/{SERVICE_FILENAME}', SERVICE_FILENAME)
-    download_file_from_s3(bucket_name, f'{config_path}/{INGRESS_FILENAME}', INGRESS_FILENAME)
-
-    if is_file_exist(DEPLOYMENT_FILENAME):
-        create_deployment(namespace, DEPLOYMENT_FILENAME)
-
-    if is_file_exist(SERVICE_FILENAME):
-        create_service(namespace, SERVICE_FILENAME)
-
-    if is_file_exist(INGRESS_FILENAME):
-        create_ingress(namespace, INGRESS_FILENAME)
-
-    print("Finished")
-
-
-def rm_files(folder_path):
-    for filename in os.listdir(folder_path):
-        this_script_name = os.path.basename(sys.argv[0])
-        if filename != this_script_name:
-            file_path = os.path.join(folder_path, filename)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-
-
-# example of usage:
-# python3 deployer.py --namespace factory-apps --config_path applications/demo1 --bucket_name factory-ci-cd
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Arguments not provided")
-        exit(1)
-
-    apply_manifests()
-    rm_files("/")
+if __name__ == '__main__':
+    main()
