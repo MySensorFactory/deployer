@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: deployer-cm
+  namespace: factory
+  labels:
+    app: deployer
+data:
+  AWS_SERVER_PUBLIC_KEY: "abc123"
+  AWS_SERVER_SECRET_KEY: "abc123"

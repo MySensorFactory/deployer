@@ -1,0 +1,30 @@
+version: 0.2
+
+env:
+    variables:
+        PROJECT_NAME: deployer
+        S3_CICD_FUNCTIONS_DESTINATION: applications/cicd
+
+phases: 
+    install:
+        runtime-versions:
+            java: corretto17
+        commands:
+            - apt update -y
+            - apt install docker.io curl -y
+            - nohup /usr/local/bin/dockerd --host=unix:///var/run/docker.sock --host=tcp://127.0.0.1:2375 --storage-driver=overlay2&
+            - timeout 15 sh -c "until docker info; do echo .; sleep 1; done"
+            - aws s3 cp s3://${BUCKET_NAME}/${S3_CICD_FUNCTIONS_DESTINATION}/ ./ --recursive
+    pre_build:
+        commands: []
+    build:
+        commands: []
+    post_build:
+        commands:
+            - bash functions/docker_build_and_push.sh
+cache:
+    paths:
+        - '/root/.m2/**/*'
+        - '/root/.npm/**/*'
+        - '/root/.pip-cache/**/*'
+        - '/root/.docker/**'

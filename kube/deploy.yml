@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployer
+  namespace: factory
+  labels:
+    app: deployer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deployer
+  template:
+    metadata:
+      labels:
+        app: deployer
+    spec:
+      serviceAccountName: deployer-sa
+      containers:
+        - name: deployer
+          imagePullPolicy: Always
+          image: juliantheking/deployer
+          env:
+            - name:  AWS_SERVER_PUBLIC_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: deployer-cm
+                  key: AWS_SERVER_PUBLIC_KEY
+            - name: AWS_SERVER_SECRET_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: deployer-cm
+                  key: AWS_SERVER_SECRET_KEY
