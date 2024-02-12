@@ -21,7 +21,6 @@ phases:
         commands: []
     post_build:
         commands:
-            - tree
             - sh functions/docker_build_and_push.sh
 cache:
     paths:
