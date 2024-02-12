@@ -21,7 +21,7 @@ phases:
         commands: []
     post_build:
         commands:
-            - bash functions/docker_build_and_push.sh
+            - ./functions/docker_build_and_push.sh
 cache:
     paths:
         - '/root/.m2/**/*'
