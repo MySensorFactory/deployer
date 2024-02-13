@@ -12,8 +12,8 @@ RUN apt install python3 -y
 RUN apt install python3-pip -y
 
 COPY . .
-ENV PYTHON_COMMONS_TAR_NAME=$(find . -type f -name "pythoncommons*" -print -quit)
-RUN mv $PYTHON_COMMONS_TAR_NAME pythoncommons.tar.gz
+
+RUN mv $(find . -type f -name 'pythoncommons*' -print -quit) pythoncommons.tar.gz
 RUN pip install pythoncommons.tar.gz
 
 ENTRYPOINT ["python", "deployer.py"]
